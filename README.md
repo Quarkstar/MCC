@@ -1,1 +1,2 @@
 # MCC
+BUAA C COMPILER
