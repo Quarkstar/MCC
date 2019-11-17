@@ -152,6 +152,7 @@ typedef struct {
   Type* ty;
   char* name;
   int val;
+  bool global;
 } Var;
 
 extern Env *env;
