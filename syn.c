@@ -115,21 +115,6 @@ static int check_declaration() {
   return type;
 }
 // label tmp generator
-static char *int_to_string(int val) {
-  int len = 0, tmp = val;
-  if (tmp <= 0) {
-    tmp = -tmp;
-    len++;
-  }
-  while(tmp > 0) {
-    len++;
-    tmp /= 10;
-  }
-  char *ans = malloc((len+1)*sizeof(char));
-  sprintf(ans,"%d",val);
-  return ans;
-}
-
 enum {NOW,NEW};
 
 static char *get_label(int add) {
@@ -147,7 +132,7 @@ static char *get_tmp(int add) {
   static int count = 0;
   count += add;
   StringBuilder *sb = new_sb();
-  sb_append_n(sb, "$t", 1);
+  sb_append_n(sb, "$t", 2);
   sb_append(sb, int_to_string(count));
   char *ans = sb_get(sb);
   free(sb);
@@ -156,9 +141,9 @@ static char *get_tmp(int add) {
 
 static char *get_ary_addr(char *name, char *exp) {
   char *base_addr = get_tmp(NEW);
-  gen_ir2("LA", name, "", base_addr);
+  gen_ir2("la", name, "", base_addr);
   char *offset = get_tmp(NEW);
-  gen_ir2("SLL", exp, "2", offset);
+  gen_ir2("sll", exp, "2", offset);
   char *addr = get_tmp(NEW);
   gen_ir2("+", base_addr, offset, addr);
   return addr;
@@ -172,15 +157,16 @@ void program(void) {
   pre = new_list();
   funcs = new_vec();
 
+  
   get_token();
 
   const_declaration_all();
 
   var_declaration_all();
-  gen_decl();
+  gen_global_decl();
+
   func_declaration_all();
   main_func();
-
   //printf("<程序>");
 }
 
@@ -286,7 +272,7 @@ static void para_list(Function* func) {
     return;
   }
   do {
-    tp = new_type(token->kind, VAR);
+    tp = new_type(token->kind, ARG);
     match(token->kind);
     var = add_var(tp, token->data);
     vec_union1(func->args, var);
@@ -297,19 +283,18 @@ static void para_list(Function* func) {
 
 static void func_declaration(void) {
   Function* func = new_func();
+  func_now = func;
   Type *tp = declaration_head(func);
   env = new_env(env);
   vec_union1(funcs, func);
-
+  gen_function_begin();
   match(LPARENT);
   para_list(func);
   match(RPARENT);
   match(LBRACE);
   compound_statement();
   match(RBRACE);
-  if (tp->ty == VOIDTK) {
-    gen_ir2("RET", "", "", "");
-  }
+  gen_function_end();
   env = env->prev;
   //printf("<有返回值函数定义>\n");
 }
@@ -324,16 +309,19 @@ static Type* factor(void) {
   Type *tp = new_type(INTTK, EXP);
   int tmp_num;
   char tmp_char;
+  int ch;
+  Var *v;
   switch(token->kind) {
     case INTCON:
     case PLUS:
     case MINU:
       tmp_num = integer();
-      gen_ir2("LI", int_to_string(tmp_num), "", get_tmp(NEW));
+      gen_ir2("li", int_to_string(tmp_num), "", get_tmp(NEW));
       break;
     case CHARCON:
       tp->ty = CHARTK;
-      gen_ir2("LI", token->data, "", get_tmp(NEW));
+      ch = (int)token->data;
+      gen_ir2("li", int_to_string(ch), "", get_tmp(NEW));
       match(CHARCON);
       break;
     case LPARENT:
@@ -342,19 +330,23 @@ static Type* factor(void) {
       match(RPARENT);
       break;
     case IDENFR:
-      Var *v = find_var(token->data);
+      v = find_var(token->data);
       tp = v->ty;
       if (tp->kind == FUNC) {
         func_reference();
+        gen_ir2("move", get_tmp(NEW), "$v0", "");
       } else if (tp->kind == ARY) {
         match(IDENFR);
         match(LBRACK);
         expression();
         match(RBRACK);
         char *addr = get_ary_addr(v->name, get_tmp(NOW));        
-        gen_ir2("LW", addr, "", get_tmp(NEW));
+        gen_ir2("lw", addr, "", get_tmp(NEW));
+      } else if(tp->kind == CONST) {
+        gen_ir2("li", int_to_string(v->val), "", get_tmp(NEW));
+        match(IDENFR);
       } else {
-        gen_ir2("LW", v->name, "", get_tmp(NEW));
+        gen_ir2("lw", v->name, "", get_tmp(NEW));
         match(IDENFR);
       }
       break;
@@ -404,21 +396,27 @@ static Type* expression(void) {
     reg1 = new;
   }
   if (!positive) {
-    gen_ir2("-", "0", reg1, get_tmp(NEW));
+    gen_ir2("-", "$zero", reg1, get_tmp(NEW));
   }
   //printf( "<表达式>\n");
   return tp;
 }
 
 static void main_func(void) {
+  Function* func = new_func();
+  func_now = func;
+  Type *tp = new_type(token->kind, FUNC);
   match(VOIDTK);
+  func->name = token->data;
   match(MAINTK);
   match(LPARENT);
   match(RPARENT);
   env = new_env(env);
+  gen_function_begin();
   match(LBRACE);
   compound_statement();
   match(RBRACE);
+  gen_function_end();
   env = env->prev;
   //printf( "<主函数>\n");
 }
@@ -447,18 +445,18 @@ static void conditional_statement() {
   match(LPARENT);
   conditional();
   char *label = get_label(NEW);
-  gen_ir2("BZ", get_tmp(NOW), label, "");
+  gen_ir2("beqz", get_tmp(NOW), label, "");
   match(RPARENT);
   statement();
   if (token->kind == ELSETK) {
     char *label2 = get_label(NEW);
-    gen_ir2("GOTO", label2, "", "");
+    gen_ir2("j", label2, "", "");
     match(ELSETK);
-    gen_ir2(label, "", "", "");
+    gen_label(label);
     statement();
-    gen_ir2(label2, "", "", "");
+    gen_label(label2);
   } else {
-    gen_ir2(label, "", "", "");
+    gen_label(label);
   }
   //printf( "<条件语句>\n");
 }
@@ -478,12 +476,12 @@ static void for_statement() {
     match(ASSIGN);
     expression();
     char *tmp = get_tmp(NOW);
-    gen_ir2("SW", tmp, "", v1->name);
+    gen_ir2("sw", tmp, "", v1->name);
     match(SEMICN);
-    gen_ir2(label1, "", "", "");
+    gen_label(label1);
     conditional();
     match(SEMICN);
-    gen_ir2("BZ", get_tmp(NOW), label2, "");
+    gen_ir2("beqz", get_tmp(NOW), label2, "");
     Var *v2 = find_var(token->data);
     match(IDENFR);
     match(ASSIGN);
@@ -500,39 +498,39 @@ static void for_statement() {
     int step = step_len();
     match(RPARENT);
     char *v_3 = get_tmp(NEW);
-    gen_ir2("LW", v3->name, "", v_3);
+    gen_ir2("lw", v3->name, "", v_3);
     char *step_s = get_label(NEW); 
-    gen_ir2("LI", int_to_string(step), "", step_s);
+    gen_ir2("li", int_to_string(step), "", step_s);
     char *add = get_label(NEW);
     gen_ir2("+", v_3, step_s, add);
-    gen_ir2("SW", add, "", v2->name);
+    gen_ir2("sw", add, "", v2->name);
     statement();
-    gen_ir2("GOTO", label1, "", "");
-    gen_ir2(label2, "", "", "");
+    gen_ir2("j", label1, "", "");
+    gen_label(label2);
 }
 
 static void loop_statement() {
   if (token->kind == WHILETK) {
     char *label1 = get_label(NEW);
     char *label2 = get_label(NEW);
-    gen_ir2(label1, "", "", "");
+    gen_label(label1);
     match(WHILETK);
     match(LPARENT);
     conditional();
     match(RPARENT);
-    gen_ir2("BZ", get_tmp(NOW), label2, "");
+    gen_ir2("beqz", get_tmp(NOW), label2, "");
     statement();
-    gen_ir2("GOTO", label1, "", "");
-    gen_ir2(label2, "", "", "");
+    gen_ir2("j", label1, "", "");
+    gen_label(label2);
   } else if (token->kind == DOTK) {
     char *label = get_label(NEW);
-    gen_ir2(label, "", "", "");
+    gen_label(label);
     match(DOTK);
     statement();
     match(WHILETK);
     match(LPARENT);
     conditional();
-    gen_ir2("BNZ", get_tmp(NOW), label, "");
+    gen_ir2("bnez", get_tmp(NOW), label, "");
     match(RPARENT);
   } else if (token->kind == FORTK) {
     for_statement();
@@ -543,20 +541,26 @@ static void loop_statement() {
 static void print_statement(void) {
   match(PRINTFTK);
   match(LPARENT);
-  char *tmp1 = "";
-  char *tmp2 = "";
+  char *tmp = "";
+  char *kind = "";
+  Type *tp;
   if (token->kind == STRCON) {
-    tmp1 = string_ascii();
+    tmp = string_ascii();
+    gen_ir2("PRINT", tmp, "S", "");
     if (token->kind == COMMA) {
       match(COMMA);
-      expression();
-      tmp2 = get_tmp(NOW);
+      tp = expression();
+      tmp = get_tmp(NOW);
+      kind = tp->ty == CHARTK ? "C" : "I";
+      gen_ir2("PRINT", tmp, kind, "");
     }
   } else {
-    expression();
-    tmp1 = get_tmp(NOW);
+    tp = expression();
+    tmp = get_tmp(NOW);
+    kind = tp->ty == CHARTK ? "C" : "I";
+    gen_ir2("PRINT", tmp, kind, "");
   }
-  gen_ir2("PRINT", tmp1, tmp2, "");
+  gen_ir2("PRINT", "", "N", "");
   match(RPARENT);
   //printf( "<写语句>\n");
 }
@@ -578,9 +582,9 @@ static void return_statement() {
     match(LPARENT);
     Type *tp = expression();
     match(RPARENT);
-    gen_ir2("RET", get_tmp(NOW), "", "");
+    gen_ir2("ret", get_tmp(NOW), "", "");
   } else {
-    gen_ir2("RET", "", "", "");
+    gen_ir2("ret", "", "", "");
   }
   //printf( "<返回语句>\n");
 }
@@ -593,16 +597,14 @@ static void assign_statement(void) {
     match(LBRACK);
     Type *tp = expression();
     match(RBRACK);
-    char *exp = get_tmp(NOW);
-    char *base_addr = get_tmp(NEW);
     array = get_ary_addr(v->name, get_tmp(NOW));
   }
   match(ASSIGN);
   expression();
-  if (v->ty->kind == VAR) {
-    gen_ir2("SW", get_tmp(NOW), "", v->name);
+  if (v->ty->kind == VAR || v->ty->kind == ARG) {
+    gen_ir2("sw", get_tmp(NOW), "", v->name);
   } else if (v->ty->kind == ARY) {
-    gen_ir2("SW", get_tmp(NOW), "", array);
+    gen_ir2("sw", get_tmp(NOW), "", array);
   }
   //printf( "<赋值语句>\n");
 }
@@ -616,7 +618,7 @@ static void para_ref_list(Function* func) {
   }
   do {
     tp = expression();
-    gen_ir2("PUSH",get_tmp(NOW),"","");
+    gen_ir2("push",get_tmp(NOW),"","");
   } while (consume(COMMA));
 
   //printf( "<值参数表>\n");
@@ -642,7 +644,7 @@ static Type* func_reference(void) {
   } else {
     error("undefine function");
   }
-  gen_ir2("CALL",func->name,"","");
+  gen_ir2("jal",func->name,"","");
   return tp;
 }
 

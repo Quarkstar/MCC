@@ -69,6 +69,7 @@ void sb_append(StringBuilder* sb, char* s);
 void sb_append_n(StringBuilder* sb, char* s, int len);
 char* sb_get(StringBuilder* sb);
 
+char *int_to_string(int);
 enum {
   IDENFR,
   INTCON,
@@ -109,7 +110,7 @@ enum {
 };
 
 
-enum { VAR = 1, ARY, FUNC, CONST, EXP };
+enum { VAR = 1, ARG ,ARY, FUNC, CONST, EXP };
 
 typedef struct Type {
   int ty;
@@ -157,7 +158,7 @@ typedef struct {
 
 extern Env *env;
 extern Vector *funcs;
-
+extern Function *func_now;
 
 Env *new_env(Env *);
 Function* new_func(void);
@@ -165,6 +166,12 @@ Var *find_var(char *);
 Var *find_var_this_env(char *);
 Var *add_var(Type *, char *);
 Type* new_type(int, int);
+void gen_mips_init();
+void gen_mips_end();
+void gen_global_decl(void);
 void gen_decl(void);
 void gen_ir2(char*, char*, char*, char*);
+void gen_label(char *);
+void gen_function_begin(void);
+void gen_function_end(void);
 #endif

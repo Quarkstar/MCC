@@ -148,3 +148,18 @@ char* sb_get(StringBuilder* sb) {
   }
   return sb->data;
 }
+
+char *int_to_string(int val) {
+  int len = 0, tmp = val;
+  if (tmp <= 0) {
+    tmp = -tmp;
+    len++;
+  }
+  while(tmp > 0) {
+    len++;
+    tmp /= 10;
+  }
+  char *ans = malloc((len+1)*sizeof(char));
+  sprintf(ans,"%d",val);
+  return ans;
+}
