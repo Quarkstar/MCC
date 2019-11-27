@@ -119,7 +119,8 @@ typedef struct Type {
 } Type;
 
 // error.c
-void error(char* s);
+void error(char* );
+void errort(char *);
 // test.c
 void print_token(void);
 void test();

@@ -68,7 +68,6 @@ static void match(int tk) {
   } else {
     error("other error");
     //printf("%d\n",tk);
-    exit(-1);
   }
 }
 
@@ -110,10 +109,9 @@ static int check_declaration() {
     default:
       type = OTHER_DECL;
   }
-  ////printf("my: %d %d %d %d %d %s\n",type,line,pre->len,list->len,token->kind,token->data);
-  //printf("this: %d",type);
   return type;
 }
+
 // label tmp generator
 enum {NOW,NEW};
 
@@ -156,18 +154,12 @@ void program(void) {
   list = new_list();
   pre = new_list();
   funcs = new_vec();
-
-  
   get_token();
-
   const_declaration_all();
-
   var_declaration_all();
   gen_global_decl();
-
   func_declaration_all();
   main_func();
-  //printf("<程序>");
 }
 
 static int unsigned_integer(void) {
@@ -224,7 +216,6 @@ static void const_declaration(void) {
 }
 
 static void var_declaration_all(void) {
-    //printf("im in var_decl_now! %d %s\n",token->kind, token->data);
   while (check_declaration() == VAR_DECL){
     var_declaration();
     match(SEMICN);
@@ -320,7 +311,7 @@ static Type* factor(void) {
       break;
     case CHARCON:
       tp->ty = CHARTK;
-      ch = (int)token->data;
+      ch = (int)token->data[0];
       gen_ir2("li", int_to_string(ch), "", get_tmp(NEW));
       match(CHARCON);
       break;
@@ -385,6 +376,10 @@ static Type* expression(void) {
   }
   tp = item();
   char *reg1 = get_tmp(NOW);
+  if (!positive) {
+    gen_ir2("-", "$zero", reg1, get_tmp(NEW));
+  }
+  reg1 = get_tmp(NOW);
   while (token->kind == PLUS || token->kind == MINU) {
     char *op = token->data;
     tp->ty = INTTK;
@@ -395,9 +390,7 @@ static Type* expression(void) {
     gen_ir2(op, reg1, reg2, new);
     reg1 = new;
   }
-  if (!positive) {
-    gen_ir2("-", "$zero", reg1, get_tmp(NEW));
-  }
+  
   //printf( "<表达式>\n");
   return tp;
 }
@@ -498,13 +491,13 @@ static void for_statement() {
     int step = step_len();
     match(RPARENT);
     char *v_3 = get_tmp(NEW);
-    gen_ir2("lw", v3->name, "", v_3);
-    char *step_s = get_label(NEW); 
-    gen_ir2("li", int_to_string(step), "", step_s);
-    char *add = get_label(NEW);
-    gen_ir2("+", v_3, step_s, add);
-    gen_ir2("sw", add, "", v2->name);
+    char *step_s = get_tmp(NEW); 
+    char *add = get_tmp(NEW);
     statement();
+    gen_ir2("lw", v3->name, "", v_3);
+    gen_ir2("li", int_to_string(step), "", step_s);
+    gen_ir2(op, v_3, step_s, add);
+    gen_ir2("sw", add, "", v2->name);
     gen_ir2("j", label1, "", "");
     gen_label(label2);
 }
@@ -706,9 +699,6 @@ static void compound_statement() {
   //printf( "<复合语句>\n");
 }
 
-
-
-// string() may be conflict with lib function
 static char *string_ascii(void) {
   char *ans = token->data;
   match(STRCON);

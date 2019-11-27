@@ -41,23 +41,27 @@ void gen_decl() {
         var->global = global;
         printf("kind:%d type:%d name:%s val:%d %d\n", var->ty->kind, var->ty->ty, var->name, var->val,global);
         if(var->ty->kind == ARG) {
-                var->val = (--arg_offset) * 4; {
-                    if (arg_offset < 2) {
-                        error("wrong arg_offset");
-                    }
+            var->val = (--arg_offset) * 4; {
+                if (arg_offset < 2) {
+                    error("wrong arg_offset");
                 }
-            } else if (var->ty->kind == VAR) {
+            }
+        } else if (var->ty->kind == VAR) {
                 local_offset++;
                 var->val = -(local_offset * 4);
-            } else if (var->ty->kind == ARY) {
+        } else if (var->ty->kind == ARY) {
                 local_offset += var->ty->len;
                 var->val = -(local_offset * 4);
-            } 
-            if (local_offset) {
-                fprintf(mips, "addiu $sp $sp -%d\n",local_offset*4);
-            }
-        }
+        }     
     }
+    if (local_offset) {
+        fprintf(mips, "addiu $sp $sp -%d\n",local_offset*4);
+    }
+    fprintf(mips, "addiu $sp $sp -%d\n",32);
+    for(int i = 0; i <= 7; i++) {
+       fprintf(mips, "sw $s%d %d($sp)\n", i, 4*i); 
+    }
+}
 
 static struct {
   char *name;
@@ -70,7 +74,7 @@ static struct {
 };
 
 static void printf_reg() {
-    for(int i = 0; i < 18; i++)
+    for(int i = 16; i < 24; i++)
     printf("%s %d\n",mips_reg[i].name, mips_reg[i].tmp);
 }
 
@@ -83,29 +87,30 @@ static int get_tmp_num(char *t) {
 }
 
 static char *tmp_alloc(char *t) {
-    int i;
-  for(i = 8; i<=15;i++) {
-    if(mips_reg[i].tmp == 0) {
-      mips_reg[i].tmp = get_tmp_num(t);
-      break;
+    bool find_free = false;
+    for(int i = 16; i <= 23; i++) {
+        if(mips_reg[i].tmp == 0) {
+            find_free = true;
+            mips_reg[i].tmp = get_tmp_num(t);
+            return mips_reg[i].name;
+        }
     }
-    if (i == 15) {
-      error("no free reg");
+    if(!find_free) {
+        errort("no free reg");
     }
-  }
-  return mips_reg[i].name;
+    return NULL;
 }
 
 static char *tmp_get(char *t) {
   int num = get_tmp_num(t);
-  for(int i = 8; i<=15;i++) {
+  for(int i = 16; i <= 23; i++) {
     if(mips_reg[i].tmp == num) {
       mips_reg[i].tmp = 0;
       return mips_reg[i].name;
     }
   }
-  printf("error: %d\n",num);
-  error("not find tmp");
+  printf("error: %d %s\n",num,t);
+  errort("not find tmp");
   return NULL;
 }
 
@@ -119,7 +124,7 @@ static void compute(char *op, char *t1, char* t2, char *ans) {
     if (!strcmp(op,"+")) {
         fprintf(mips, "addu %s %s %s\n",tmp_alloc(ans),tmp_get(t1),tmp_get(t2));
     } else if (!strcmp(op,"-")) {
-        if (!strcmp("$zero",t1)) {
+        if (strcmp("$zero",t1)) {
             t1 = tmp_get(t1);
         }
         fprintf(mips, "subu %s %s %s\n",tmp_alloc(ans),t1,tmp_get(t2));
@@ -140,7 +145,7 @@ static void branch(char *op, char *t1, char *t2) {
     } else if (!strcmp(op,"beqz")) {
         fprintf(mips, "beqz %s %s\n",tmp_get(t1),t2);
     } else if (!strcmp(op,"bnez")) {
-        fprintf(mips, "beqz %s %s\n",tmp_get(t1),t2);
+        fprintf(mips, "bnez %s %s\n",tmp_get(t1),t2);
     }
 }
 
@@ -193,7 +198,6 @@ static void memory(char *op, char *t1, char *ans) {
         }   
     } else if (!strcmp(op,"li")) {
         fprintf(mips, "li %s %s\n",tmp_alloc(ans),t1);
-        printf_reg();
     } // TODO 'c'
 }
 
@@ -207,9 +211,14 @@ void gen_function_begin() {
 
 void gen_function_end() {
     fprintf(mips, "%s_end:\n",func_now->name);
+    for(int i = 0; i <= 7; i++) {
+       fprintf(mips, "lw $s%d %d($sp)\n", i, 4*i); 
+    }
+    fprintf(mips, "addiu $sp $sp %d\n",32);
     fprintf(mips, "move $sp $fp\n");
     fprintf(mips, "lw $fp 0($sp)\n");
     fprintf(mips, "lw $ra 4($sp)\n");
+    fprintf(mips, "addiu $sp $sp %d\n",func_now->args->len*4+8);
     fprintf(mips, "jr $ra\n");
 }
 
@@ -222,6 +231,7 @@ static void function(char *op, char *t1) {
         }
         fprintf(mips, "j %s_end\n",func_now->name);
     }
+    printf_reg();
 } 
 
 static void io(char *op, char *t1, char *t2, char *ans) {
